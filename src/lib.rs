@@ -13,6 +13,15 @@ pub enum Color {
     Black,
 }
 
+impl Color {
+    pub fn flip(&self) -> Color {
+        match self {
+            Color::Red => Color::Black,
+            Color::Black => Color::Red,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Node<T: Clone + Debug> {
     pub key: TextRange,
@@ -327,12 +336,12 @@ impl<T: Clone + Debug> Node<T> {
     /// if node.left and node.right are both red, mark them black turn node to red.
     fn flip_colors_inner(n: &mut BoxedNode<T>) {
         if let Some(ref mut l) = n.left {
-            l.color = Color::Black;
+            l.color = l.color.flip();
         }
         if let Some(ref mut r) = n.right {
-            r.color = Color::Black;
+            r.color = r.color.flip();
         }
-        n.color = Color::Red;
+        n.color = n.color.flip();
     }
 
     /// rotate left if node.right is red
@@ -425,11 +434,21 @@ impl<T: Clone + Debug> Node<T> {
                 // return None;
             }
 
-            if let Some(ref mut r) = n.right {
-                if r.color == Color::Black && !Node::red(&r.left) {
-                    Node::move_red_right(n).unwrap();
-                }
+            let cond = if let Some(ref r) = n.right {
+                r.color == Color::Black && !Node::red(&r.left)
+            } else {
+                true
+            };
+
+            if cond {
+                Node::move_red_right(n).unwrap();
             }
+
+            // if let Some(ref mut r) = n.right {
+            //     if r.color == Color::Black && !Node::red(&r.left) {
+            //         Node::move_red_right(n).unwrap();
+            //     }
+            // }
 
             if key == n.key {
                 let mut result = Node::delete_min(&mut n.right);
@@ -605,23 +624,23 @@ impl<T: Clone + Debug> IntervalTree<T> {
         Self { root: None }
     }
 
-/// Inserts a new interval with the specified `key` and `val` into the interval tree.
-/// 
-/// If the interval `key` is degenerate (i.e., its start equals its end), the function
-/// returns `None` as such intervals are not allowed in the tree. Otherwise, it delegates
-/// the insertion to the underlying node structure.
-/// 
-/// # Arguments
-/// 
-/// * `key` - The text range representing the interval to insert.
-/// * `val` - The value associated with the interval.
-/// * `merge` - A closure that specifies how to merge intervals if they overlap, returning
-///   a tuple with the merged value and a boolean indicating if the value was changed.
-/// 
-/// # Returns
-/// 
-/// An optional mutable reference to the newly inserted node, or `None` if the interval is
-/// degenerate.
+    /// Inserts a new interval with the specified `key` and `val` into the interval tree.
+    /// 
+    /// If the interval `key` is degenerate (i.e., its start equals its end), the function
+    /// returns `None` as such intervals are not allowed in the tree. Otherwise, it delegates
+    /// the insertion to the underlying node structure.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `key` - The text range representing the interval to insert.
+    /// * `val` - The value associated with the interval.
+    /// * `merge` - A closure that specifies how to merge intervals if they overlap, returning
+    ///   a tuple with the merged value and a boolean indicating if the value was changed.
+    /// 
+    /// # Returns
+    /// 
+    /// An optional mutable reference to the newly inserted node, or `None` if the interval is
+    /// degenerate.
     pub fn insert<'a, F: Fn(T, T) -> anyhow::Result<(T, bool)>>(
         &'a mut self,
         key: TextRange,
@@ -732,21 +751,21 @@ impl<T: Clone + Debug> IntervalTree<T> {
 
     fn min_mut(&mut self) -> Option<*mut Node<T>> {
         self.root.as_mut().map(|n| n.min_mut() as *mut Node<T>)
-        
+            
     }
 
-/// Merges adjacent intervals in the tree that have equal properties.
-/// 
-/// This function iterates over the nodes in the interval tree, starting from 
-/// the minimum node. It checks if the current node's end equals the next node's 
-/// start and if their values are considered equal by the provided `equal` 
-/// function. If both conditions are met, it merges the intervals by extending 
-/// the current node's end to the next node's end and deletes the next node.
-/// 
-/// # Arguments
-/// 
-/// * `equal` - A closure that takes references to two values and returns `true` 
-///   if they are considered equal, `false` otherwise.
+    /// Merges adjacent intervals in the tree that have equal properties.
+    /// 
+    /// This function iterates over the nodes in the interval tree, starting from 
+    /// the minimum node. It checks if the current node's end equals the next node's 
+    /// start and if their values are considered equal by the provided `equal` 
+    /// function. If both conditions are met, it merges the intervals by extending 
+    /// the current node's end to the next node's end and deletes the next node.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `equal` - A closure that takes references to two values and returns `true` 
+    ///   if they are considered equal, `false` otherwise.
     pub fn merge<F: Fn(&T, &T) -> bool>(&mut self, equal: F) {
         if let Some(node_ptr) = self.min_mut() {
             let mut node = safe_mut(node_ptr);
