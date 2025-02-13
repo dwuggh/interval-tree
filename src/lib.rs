@@ -566,16 +566,42 @@ impl<T: Clone + Debug> Node<T> {
         }
     }
 
-    pub fn map<F>(&mut self, f: &mut F)
+    fn map<F>(&self, f: &mut F)
+    where
+        F: FnMut(& Node<T>),
+    {
+        if let Some(ref  l) = self.left {
+            l.apply(f);
+        }
+        f(self);
+        if let Some(ref  r) = self.right {
+            r.apply(f);
+        }
+    }
+
+    fn apply<F>(&self, f: &mut F)
+    where
+        F: FnMut(& Node<T>),
+    {
+        if let Some(ref  l) = self.left {
+            l.apply(f);
+        }
+        f(self);
+        if let Some(ref  r) = self.right {
+            r.apply(f);
+        }
+    }
+
+    fn apply_mut<F>(&mut self, f: &mut F)
     where
         F: FnMut(&mut Node<T>),
     {
         if let Some(ref mut l) = self.left {
-            l.map(f);
+            l.apply_mut(f);
         }
         f(self);
         if let Some(ref mut r) = self.right {
-            r.map(f);
+            r.apply_mut(f);
         }
     }
 
@@ -587,7 +613,7 @@ impl<T: Clone + Debug> Node<T> {
             }
             self.key.advance(length);
             if let Some(ref mut r) = self.right {
-                r.map(&mut |n| n.key.advance(length));
+                r.apply_mut(&mut |n| n.key.advance(length));
             }
         } else {
             if self.key.end > position {
@@ -616,7 +642,7 @@ impl<T: Clone + Debug> Node<T> {
 /// inside a interval tree will not overlap. Adjacant intervals with identical props
 /// should be merged afterwards, maybe during redisplay.
 pub struct IntervalTree<T: Clone + Debug> {
-    root: MaybeNode<T>,
+    pub root: MaybeNode<T>,
 }
 
 impl<T: Clone + Debug> IntervalTree<T> {
@@ -643,10 +669,11 @@ impl<T: Clone + Debug> IntervalTree<T> {
     /// degenerate.
     pub fn insert<'a, F: Fn(T, T) -> anyhow::Result<(T, bool)>>(
         &'a mut self,
-        key: TextRange,
+        key: impl Into<TextRange>,
         val: T,
         merge: F,
     ) -> Option<&'a mut Box<Node<T>>> {
+        let key = key.into();
         if key.start == key.end {
             return None;
         }
@@ -662,9 +689,9 @@ impl<T: Clone + Debug> IntervalTree<T> {
         result
     }
 
-    pub fn get(&self, key: TextRange) -> Option<T> {
+    pub fn get(&self, key: impl Into<TextRange>) -> Option<T> {
         match self.root {
-            Some(ref r) => r.get(key),
+            Some(ref r) => r.get(key.into()),
             None => None,
         }
     }
@@ -675,7 +702,8 @@ impl<T: Clone + Debug> IntervalTree<T> {
     /// before deleting. Otherwise, the tree would become unbalanced.
     ///
     /// After deleting, we make sure the root node is black again.
-    pub fn delete(&mut self, key: TextRange) -> MaybeNode<T> {
+    pub fn delete(&mut self, key: impl Into<TextRange>) -> MaybeNode<T> {
+        let key = key.into();
         let result = match self.root {
             Some(ref mut root) => {
                 if !Node::red(&root.left) && !Node::red(&root.right) {
@@ -778,6 +806,18 @@ impl<T: Clone + Debug> IntervalTree<T> {
                     node = next;
                 }
             }
+        }
+    }
+
+    pub fn apply<F: FnMut(&T)>(&self, f: &mut F) {
+        if let Some(r) = self.root.as_ref() {
+            r.apply(&mut |n: &Node<T>| f(&n.val));
+        }
+    }
+
+    pub fn apply_mut<F: FnMut(&mut Node<T>)>(&mut self, f: &mut F) {
+        if let Some(r) = self.root.as_mut() {
+            r.apply_mut(&mut |n| f(n));
         }
     }
 

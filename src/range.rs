@@ -31,6 +31,23 @@ impl RangeBounds<usize> for TextRange {
     }
 }
 
+impl<T: Into<usize>> From<Range<T>> for TextRange {
+    fn from(range: Range<T>) -> Self {
+        Self {
+            start: range.start.into(),
+            end: range.end.into(),
+        }
+    }
+}
+impl<T: Into<usize>> From<(T, T)> for TextRange {
+    fn from((start, end): (T, T)) -> Self {
+        Self {
+            start: start.into(),
+            end: end.into(),
+        }
+    }
+}
+
 impl TextRange {
     /// caller should check that start < end
     pub fn new(start: usize, end: usize) -> Self {
