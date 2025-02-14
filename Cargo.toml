@@ -1,7 +1,8 @@
 [package]
-name = "interval_tree"
+name = "interval-rbtree"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "An interval tree implementation using Red-Black Tree as its underlying data structure."
 
 [dependencies]

@@ -1,4 +1,4 @@
-# interval-tree
+# interval-rbtree
 
 ---
 

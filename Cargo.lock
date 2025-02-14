@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "interval_tree"
+name = "interval-rbtree"
 version = "0.1.0"
