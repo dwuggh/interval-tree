@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::fmt::Debug;
+use std::fmt::{Arguments, Debug, Write};
 pub mod range;
 pub use range::TextRange;
 
@@ -22,8 +22,8 @@ impl Color {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Node<T: Clone + Debug> {
+#[derive(Clone)]
+pub struct Node<T: Clone> {
     pub key: TextRange,
     pub val: T,
     left: MaybeNode<T>,
@@ -36,7 +36,7 @@ pub struct Node<T: Clone + Debug> {
 pub type BoxedNode<T> = Box<Node<T>>;
 pub type MaybeNode<T> = Option<BoxedNode<T>>;
 
-impl<T: Clone + Debug> Node<T> {
+impl<T: Clone> Node<T> {
     #[inline]
     pub fn red(node: &MaybeNode<T>) -> bool {
         node.as_ref()
@@ -193,9 +193,11 @@ impl<T: Clone + Debug> Node<T> {
             std::cmp::Ordering::Greater => self.right.as_ref().and_then(|n| n.get(key)),
         }
     }
-}
 
-impl<T: Clone + Debug> Node<T> {
+    /* ------------------------------------------------------------ */
+    /*                       insertion                              */
+    /* ------------------------------------------------------------ */
+
     pub fn insert_at<'a, F: Fn(T, T) -> anyhow::Result<(T, bool)>>(
         node: &'a mut MaybeNode<T>,
         key: TextRange,
@@ -323,18 +325,13 @@ impl<T: Clone + Debug> Node<T> {
         node.n = node.n();
         Some(node)
     }
-}
 
-// deletion
-impl<T: Clone + Debug> Node<T> {
+    /* ------------------------------------------------------------ */
+    /*                        deletion                              */
+    /* ------------------------------------------------------------ */
+
     /// if node.left and node.right are both red, mark them black turn node to red.
-    fn flip_colors(node: &mut MaybeNode<T>) {
-        if let Some(ref mut n) = node {
-            Node::flip_colors_inner(n)
-        };
-    }
-    /// if node.left and node.right are both red, mark them black turn node to red.
-    fn flip_colors_inner(n: &mut BoxedNode<T>) {
+    fn flip_colors(n: &mut BoxedNode<T>) {
         if let Some(ref mut l) = n.left {
             l.color = l.color.flip();
         }
@@ -353,18 +350,18 @@ impl<T: Clone + Debug> Node<T> {
     }
 
     fn move_red_left(node: &mut BoxedNode<T>) -> Option<()> {
-        Node::flip_colors_inner(node);
+        Node::flip_colors(node);
         let nr = node.right.as_mut()?;
         if Node::red(&nr.left) {
             Node::rotate_right(nr)?;
             Node::rotate_left(node)?;
-            Node::flip_colors_inner(node);
+            Node::flip_colors(node);
         }
         Some(())
     }
 
     fn move_red_right(node: &mut BoxedNode<T>) -> Option<()> {
-        Node::flip_colors_inner(node);
+        Node::flip_colors(node);
         // h.left.left == Red
         let cond = match node.left {
             Some(ref l) => Node::red(&l.left),
@@ -372,7 +369,7 @@ impl<T: Clone + Debug> Node<T> {
         };
         if cond {
             Node::rotate_right(node)?;
-            Node::flip_colors_inner(node);
+            Node::flip_colors(node);
         }
         Some(())
     }
@@ -464,10 +461,11 @@ impl<T: Clone + Debug> Node<T> {
         Node::balance(n)?;
         result
     }
-}
 
-// intersection
-impl<T: Clone + Debug> Node<T> {
+    /* ------------------------------------------------------------ */
+    /*                        intersection                          */
+    /* ------------------------------------------------------------ */
+
     pub fn next(&self) -> Option<&Node<T>> {
         let mut n = self;
         if let Some(ref r) = self.right {
@@ -477,7 +475,7 @@ impl<T: Clone + Debug> Node<T> {
             }
             return Some(n);
         }
-        while let Some(parent) = n.parent_mut() {
+        while let Some(parent) = n.parent() {
             if !n.is_right_child {
                 return Some(parent);
             }
@@ -570,13 +568,13 @@ impl<T: Clone + Debug> Node<T> {
     /// f is mutable and has type FnMut because it may modify its parameters
     fn apply<F>(&self, f: &mut F)
     where
-        F: FnMut(& Node<T>),
+        F: FnMut(&Node<T>),
     {
-        if let Some(ref  l) = self.left {
+        if let Some(ref l) = self.left {
             l.apply(f);
         }
         f(self);
-        if let Some(ref  r) = self.right {
+        if let Some(ref r) = self.right {
             r.apply(f);
         }
     }
@@ -621,7 +619,7 @@ impl<T: Clone + Debug> Node<T> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 /// A interval tree using red-black tree, whereas keys are intervals, and values are
 /// plists in elisp.
 ///
@@ -632,31 +630,31 @@ impl<T: Clone + Debug> Node<T> {
 /// J but I != J, then we split & merge I and J into sub-intervals. Thus all intervals
 /// inside a interval tree will not overlap. Adjacant intervals with identical props
 /// should be merged afterwards, maybe during redisplay.
-pub struct IntervalTree<T: Clone + Debug> {
+pub struct IntervalTree<T: Clone> {
     pub root: MaybeNode<T>,
 }
 
-impl<T: Clone + Debug> IntervalTree<T> {
+impl<T: Clone> IntervalTree<T> {
     /// Creates an empty interval tree.
     pub fn new() -> Self {
         Self { root: None }
     }
 
     /// Inserts a new interval with the specified `key` and `val` into the interval tree.
-    /// 
+    ///
     /// If the interval `key` is degenerate (i.e., its start equals its end), the function
     /// returns `None` as such intervals are not allowed in the tree. Otherwise, it delegates
     /// the insertion to the underlying node structure.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `key` - The text range representing the interval to insert.
     /// * `val` - The value associated with the interval.
     /// * `merge` - A closure that specifies how to merge intervals if they overlap, returning
     ///   a tuple with the merged value and a boolean indicating if the value was changed.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An optional mutable reference to the newly inserted node, or `None` if the interval is
     /// degenerate.
     pub fn insert<'a, F: Fn(T, T) -> anyhow::Result<(T, bool)>>(
@@ -682,13 +680,13 @@ impl<T: Clone + Debug> IntervalTree<T> {
     }
 
     /// Finds the node with key `key` in the tree and returns its value if found.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `key` - The text range representing the interval to search for.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An optional value associated with the node if it exists, `None` otherwise.
     pub fn get(&self, key: impl Into<TextRange>) -> Option<T> {
         match self.root {
@@ -743,16 +741,6 @@ impl<T: Clone + Debug> IntervalTree<T> {
         result
     }
 
-    /// Deletes the node with the maximum key from the interval tree.
-    ///
-    /// If the root node is the only black node, it is temporarily colored red
-    /// to maintain tree balance during deletion. After deletion, the root node
-    /// is recolored black to ensure the red-black tree properties are preserved.
-    ///
-    /// # Returns
-    ///
-    /// An optional `Node<T>` representing the removed node, or `None` if
-    /// the tree is empty.
     pub fn delete_max(&mut self) -> MaybeNode<T> {
         let root = self.root.as_mut()?;
         if !Node::red(&root.left) && !Node::red(&root.right) {
@@ -800,20 +788,19 @@ impl<T: Clone + Debug> IntervalTree<T> {
 
     fn min_mut(&mut self) -> Option<*mut Node<T>> {
         self.root.as_mut().map(|n| n.min_mut() as *mut Node<T>)
-            
     }
 
     /// Merges adjacent intervals in the tree that have equal properties.
-    /// 
-    /// This function iterates over the nodes in the interval tree, starting from 
-    /// the minimum node. It checks if the current node's end equals the next node's 
-    /// start and if their values are considered equal by the provided `equal` 
-    /// function. If both conditions are met, it merges the intervals by extending 
+    ///
+    /// This function iterates over the nodes in the interval tree, starting from
+    /// the minimum node. It checks if the current node's end equals the next node's
+    /// start and if their values are considered equal by the provided `equal`
+    /// function. If both conditions are met, it merges the intervals by extending
     /// the current node's end to the next node's end and deletes the next node.
-    /// 
+    ///
     /// # Arguments
-    /// 
-    /// * `equal` - A closure that takes references to two values and returns `true` 
+    ///
+    /// * `equal` - A closure that takes references to two values and returns `true`
     ///   if they are considered equal, `false` otherwise.
     pub fn merge<F: Fn(&T, &T) -> bool>(&mut self, equal: F) {
         if let Some(node_ptr) = self.min_mut() {
@@ -830,53 +817,72 @@ impl<T: Clone + Debug> IntervalTree<T> {
         }
     }
 
-    /// Applies a function to all values in the interval tree. The function is 
-    /// given a reference to each value in the tree in order of increasing key 
-    /// start. The function is not given any information about the keys.
     pub fn apply<F: FnMut(&T)>(&self, f: &mut F) {
         if let Some(r) = self.root.as_ref() {
             r.apply(&mut |n: &Node<T>| f(&n.val));
         }
     }
 
-    /// Applies a function to all values in the interval tree, modifying the values
-    /// in place. The function is given a mutable reference to each value in the
-    /// tree in order of increasing key start. The function is not given any
-    /// information about the keys.
     pub fn apply_mut<F: FnMut(&mut Node<T>)>(&mut self, f: &mut F) {
         if let Some(r) = self.root.as_mut() {
             r.apply_mut(&mut |n| f(n));
         }
     }
-
+}
+impl<T: Clone + Debug> IntervalTree<T> {
     /// Recursively print out the tree, for debugging purposes. The output format
     /// is not guaranteed to be stable.
     pub fn print(&self) {
-        let Some(ref root) = self.root else { return };
-        IntervalTree::print_inner(root);
+        println!("{self:?}");
     }
 
-    fn print_inner(node: &Node<T>) {
-        println!(
-            "key: {:?}, val: {:?}, color: {:?}",
+
+    fn print_inner(node: &Node<T>, f: &mut std::fmt::Formatter, level: usize) -> std::fmt::Result {
+        write_fmt_with_level(f, level, format_args!(
+            "[key: {:?}, val: {:?}, color: {:?}]\n",
             node.key, node.val, node.color
-        );
+        ))?;
         if let Some(parent) = unsafe { node.parent.as_ref() } {
+
             let direction = if node.is_right_child { "right" } else { "left" };
-            println!("parent({} child): {:?}", direction, parent.key);
+            write_fmt_with_level(f, level, format_args!(
+                "parent({} child): {:?}",
+                direction, parent.key
+            ))?;
         } else {
-            println!("parent: not found");
+            write_fmt_with_level(f, level, format_args!("parent: not found"))?;
         }
+        f.write_char('\n')?;
         if let Some(ref l) = node.left {
-            println!("left: ");
-            IntervalTree::print_inner(l);
-            println!("left end for {:?}", node.key);
+            write_fmt_with_level(f, level, format_args!("left: \n"))?;
+            IntervalTree::print_inner(l, f, level + 1)?;
+            write_fmt_with_level(f, level, format_args!("left end for {:?}\n", node.key))?;
         }
         if let Some(ref r) = node.right {
-            println!("right: ");
-            IntervalTree::print_inner(r);
-            println!("right end for {:?}", node.key);
+            write_fmt_with_level(f, level, format_args!("right: \n"))?;
+            IntervalTree::print_inner(r, f, level + 1)?;
+            write_fmt_with_level(f, level, format_args!("right end for {:?}\n", node.key))?;
         }
+        // f.write_char('\n')?;
+        Ok(())
+    }
+}
+
+fn write_fmt_with_level(f: &mut std::fmt::Formatter, level: usize, fmt: Arguments<'_>) -> std::fmt::Result {
+    for _ in 0..level {
+        f.write_char('\t')?;
+    }
+    f.write_fmt(fmt)
+}
+
+impl<T: Clone + Debug> Debug for IntervalTree<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Interval Tree:\n")?;
+        if let Some(root) = self.root.as_ref() {
+            IntervalTree::print_inner(root, f, 0)?
+        }
+        Ok(())
+        // f.debug_struct("IntervalTree").field("root", &self.root).finish()
     }
 }
 
@@ -901,6 +907,7 @@ mod tests {
         tree.insert(TextRange::new(7, 8), val.clone(), merge);
         tree.insert(TextRange::new(8, 9), val.clone(), merge);
         tree.insert(TextRange::new(9, 10), val.clone(), merge);
+        tree.print();
         tree
     }
 
