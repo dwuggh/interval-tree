@@ -566,19 +566,8 @@ impl<T: Clone + Debug> Node<T> {
         }
     }
 
-    fn map<F>(&self, f: &mut F)
-    where
-        F: FnMut(& Node<T>),
-    {
-        if let Some(ref  l) = self.left {
-            l.apply(f);
-        }
-        f(self);
-        if let Some(ref  r) = self.right {
-            r.apply(f);
-        }
-    }
-
+    /// Recursively applies a function to each node in the tree in order.
+    /// f is mutable and has type FnMut because it may modify its parameters
     fn apply<F>(&self, f: &mut F)
     where
         F: FnMut(& Node<T>),
@@ -592,6 +581,8 @@ impl<T: Clone + Debug> Node<T> {
         }
     }
 
+    /// Recursively applies a function to each node in the tree in order.
+    /// The function may modify `Node`.
     fn apply_mut<F>(&mut self, f: &mut F)
     where
         F: FnMut(&mut Node<T>),
@@ -646,6 +637,7 @@ pub struct IntervalTree<T: Clone + Debug> {
 }
 
 impl<T: Clone + Debug> IntervalTree<T> {
+    /// Creates an empty interval tree.
     pub fn new() -> Self {
         Self { root: None }
     }
@@ -689,6 +681,15 @@ impl<T: Clone + Debug> IntervalTree<T> {
         result
     }
 
+    /// Finds the node with key `key` in the tree and returns its value if found.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `key` - The text range representing the interval to search for.
+    /// 
+    /// # Returns
+    /// 
+    /// An optional value associated with the node if it exists, `None` otherwise.
     pub fn get(&self, key: impl Into<TextRange>) -> Option<T> {
         match self.root {
             Some(ref r) => r.get(key.into()),
@@ -720,6 +721,16 @@ impl<T: Clone + Debug> IntervalTree<T> {
         result
     }
 
+    /// Deletes the node with the minimum key from the interval tree.
+    ///
+    /// If the root node is the only black node, it is temporarily colored red
+    /// to maintain tree balance during deletion. After deletion, the root node
+    /// is recolored black to ensure the red-black tree properties are preserved.
+    ///
+    /// # Returns
+    ///
+    /// An optional `Node<T>` representing the removed node, or `None` if
+    /// the tree is empty.
     pub fn delete_min(&mut self) -> MaybeNode<T> {
         let root = self.root.as_mut()?;
         if !Node::red(&root.left) && !Node::red(&root.right) {
@@ -732,6 +743,16 @@ impl<T: Clone + Debug> IntervalTree<T> {
         result
     }
 
+    /// Deletes the node with the maximum key from the interval tree.
+    ///
+    /// If the root node is the only black node, it is temporarily colored red
+    /// to maintain tree balance during deletion. After deletion, the root node
+    /// is recolored black to ensure the red-black tree properties are preserved.
+    ///
+    /// # Returns
+    ///
+    /// An optional `Node<T>` representing the removed node, or `None` if
+    /// the tree is empty.
     pub fn delete_max(&mut self) -> MaybeNode<T> {
         let root = self.root.as_mut()?;
         if !Node::red(&root.left) && !Node::red(&root.right) {
@@ -809,12 +830,19 @@ impl<T: Clone + Debug> IntervalTree<T> {
         }
     }
 
+    /// Applies a function to all values in the interval tree. The function is 
+    /// given a reference to each value in the tree in order of increasing key 
+    /// start. The function is not given any information about the keys.
     pub fn apply<F: FnMut(&T)>(&self, f: &mut F) {
         if let Some(r) = self.root.as_ref() {
             r.apply(&mut |n: &Node<T>| f(&n.val));
         }
     }
 
+    /// Applies a function to all values in the interval tree, modifying the values
+    /// in place. The function is given a mutable reference to each value in the
+    /// tree in order of increasing key start. The function is not given any
+    /// information about the keys.
     pub fn apply_mut<F: FnMut(&mut Node<T>)>(&mut self, f: &mut F) {
         if let Some(r) = self.root.as_mut() {
             r.apply_mut(&mut |n| f(n));
