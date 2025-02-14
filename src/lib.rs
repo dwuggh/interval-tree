@@ -198,16 +198,16 @@ impl<T: Clone> Node<T> {
     /*                       insertion                              */
     /* ------------------------------------------------------------ */
 
-    pub fn insert_at<'a, F: Fn(T, T) -> anyhow::Result<(T, bool)>>(
+    pub fn insert_at<'a, F: Fn(T, T) -> T>(
         node: &'a mut MaybeNode<T>,
         key: TextRange,
         val: T,
         parent: *mut Node<T>,
         is_right_child: bool,
-        merge: &F,
+        merge_fn: &F,
     ) -> Option<&'a mut BoxedNode<T>> {
         match node {
-            Some(ref mut n) => Node::insert_at_inner(n, key, val, merge),
+            Some(ref mut n) => Node::insert_at_inner(n, key, val, merge_fn),
             None => {
                 node.replace(Node::new_boxed_with_parent(
                     key,
@@ -220,11 +220,11 @@ impl<T: Clone> Node<T> {
         }
     }
 
-    fn insert_at_inner<'a, F: Fn(T, T) -> anyhow::Result<(T, bool)>>(
+    fn insert_at_inner<'a, F: Fn(T, T) -> T>(
         node: &'a mut BoxedNode<T>,
         mut key: TextRange,
         val: T,
-        merge: &F,
+        merge_fn: &F,
     ) -> Option<&'a mut BoxedNode<T>> {
         let intersect = key.intersects(node.key);
         // TODO too taunting, also, plist should be cloned?
@@ -232,7 +232,7 @@ impl<T: Clone> Node<T> {
         if intersect {
             if key.start < node.key.start {
                 let key_left = key.split_at(node.key.start, true);
-                Node::insert_at(&mut node.left, key_left, val.clone(), ptr, false, merge);
+                Node::insert_at(&mut node.left, key_left, val.clone(), ptr, false, merge_fn);
 
                 if key.end < node.key.end {
                     let key_right = node.key.split_at(key.end, false);
@@ -242,11 +242,11 @@ impl<T: Clone> Node<T> {
                         node.val.clone(),
                         ptr,
                         true,
-                        merge,
+                        merge_fn,
                     );
                 } else if key.end > node.key.end {
                     let key_right = key.split_at(node.key.end, false);
-                    Node::insert_at(&mut node.right, key_right, val.clone(), ptr, true, merge);
+                    Node::insert_at(&mut node.right, key_right, val.clone(), ptr, true, merge_fn);
                 }
             } else {
                 let key_left = node.key.split_at(key.start, true);
@@ -256,7 +256,7 @@ impl<T: Clone> Node<T> {
                     node.val.clone(),
                     ptr,
                     false,
-                    merge,
+                    merge_fn,
                 );
 
                 if key.end < node.key.end {
@@ -267,35 +267,24 @@ impl<T: Clone> Node<T> {
                         node.val.clone(),
                         ptr,
                         true,
-                        merge,
+                        merge_fn,
                     );
                 } else if key.end > node.key.end {
                     let key_right = key.split_at(node.key.end, false);
-                    Node::insert_at(&mut node.right, key_right, val.clone(), ptr, true, merge);
+                    Node::insert_at(&mut node.right, key_right, val.clone(), ptr, true, merge_fn);
                 }
             }
         }
         let cmp = key.cmp(&node.key);
         match cmp {
             Ordering::Less => {
-                Node::insert_at(&mut node.left, key, val, ptr, false, merge)?;
+                Node::insert_at(&mut node.left, key, val, ptr, false, merge_fn)?;
             }
             Ordering::Equal => {
-                // let (val, changed) = add_properties(
-                //     val,
-                //     node.val,
-                //     crate::textprops::PropertySetType::Replace,
-                //     false,
-                //
-                // )
-                // .ok()?;
-                let (val, changed) = merge(val, node.val.clone()).ok()?;
-                if changed {
-                    node.val = val;
-                }
+                node.val = merge_fn(val, node.val.clone());
             }
             Ordering::Greater => {
-                Node::insert_at(&mut node.right, key, val, ptr, true, merge)?;
+                Node::insert_at(&mut node.right, key, val, ptr, true, merge_fn)?;
             }
         };
 
@@ -631,7 +620,7 @@ impl<T: Clone> Node<T> {
 /// inside a interval tree will not overlap. Adjacant intervals with identical props
 /// should be merged afterwards, maybe during redisplay.
 pub struct IntervalTree<T: Clone> {
-    pub root: MaybeNode<T>,
+    root: MaybeNode<T>,
 }
 
 impl<T: Clone> IntervalTree<T> {
@@ -650,18 +639,17 @@ impl<T: Clone> IntervalTree<T> {
     ///
     /// * `key` - The text range representing the interval to insert.
     /// * `val` - The value associated with the interval.
-    /// * `merge` - A closure that specifies how to merge intervals if they overlap, returning
-    ///   a tuple with the merged value and a boolean indicating if the value was changed.
+    /// * `merge` - A closure that specifies how to merge intervals if they overlap
     ///
     /// # Returns
     ///
     /// An optional mutable reference to the newly inserted node, or `None` if the interval is
     /// degenerate.
-    pub fn insert<'a, F: Fn(T, T) -> anyhow::Result<(T, bool)>>(
+    pub fn insert<'a, F: Fn(T, T) -> T>(
         &'a mut self,
         key: impl Into<TextRange>,
         val: T,
-        merge: F,
+        merge_fn: F,
     ) -> Option<&'a mut Box<Node<T>>> {
         let key = key.into();
         if key.start == key.end {
@@ -673,7 +661,7 @@ impl<T: Clone> IntervalTree<T> {
             val,
             std::ptr::null_mut(),
             false,
-            &merge,
+            &merge_fn,
         );
         result.as_mut().unwrap().color = Color::Black;
         result
@@ -776,7 +764,6 @@ impl<T: Clone> IntervalTree<T> {
         let mut result = Vec::new();
         if let Some(ref r) = self.root {
             r.find_intersects(range, &mut result);
-            // r.satisfy(&|n| n.key.intersects(range), &mut result);
         }
         result
     }
@@ -836,19 +823,22 @@ impl<T: Clone + Debug> IntervalTree<T> {
         println!("{self:?}");
     }
 
-
     fn print_inner(node: &Node<T>, f: &mut std::fmt::Formatter, level: usize) -> std::fmt::Result {
-        write_fmt_with_level(f, level, format_args!(
-            "[key: {:?}, val: {:?}, color: {:?}]\n",
-            node.key, node.val, node.color
-        ))?;
+        write_fmt_with_level(
+            f,
+            level,
+            format_args!(
+                "[key: {:?}, val: {:?}, color: {:?}]\n",
+                node.key, node.val, node.color
+            ),
+        )?;
         if let Some(parent) = unsafe { node.parent.as_ref() } {
-
             let direction = if node.is_right_child { "right" } else { "left" };
-            write_fmt_with_level(f, level, format_args!(
-                "parent({} child): {:?}",
-                direction, parent.key
-            ))?;
+            write_fmt_with_level(
+                f,
+                level,
+                format_args!("parent({} child): {:?}", direction, parent.key),
+            )?;
         } else {
             write_fmt_with_level(f, level, format_args!("parent: not found"))?;
         }
@@ -863,12 +853,15 @@ impl<T: Clone + Debug> IntervalTree<T> {
             IntervalTree::print_inner(r, f, level + 1)?;
             write_fmt_with_level(f, level, format_args!("right end for {:?}\n", node.key))?;
         }
-        // f.write_char('\n')?;
         Ok(())
     }
 }
 
-fn write_fmt_with_level(f: &mut std::fmt::Formatter, level: usize, fmt: Arguments<'_>) -> std::fmt::Result {
+fn write_fmt_with_level(
+    f: &mut std::fmt::Formatter,
+    level: usize,
+    fmt: Arguments<'_>,
+) -> std::fmt::Result {
     for _ in 0..level {
         f.write_char('\t')?;
     }
@@ -882,7 +875,6 @@ impl<T: Clone + Debug> Debug for IntervalTree<T> {
             IntervalTree::print_inner(root, f, 0)?
         }
         Ok(())
-        // f.debug_struct("IntervalTree").field("root", &self.root).finish()
     }
 }
 
@@ -891,8 +883,8 @@ mod tests {
 
     use super::*;
 
-    fn merge<T: Clone + Debug>(a: T, _b: T) -> anyhow::Result<(T, bool)> {
-        Ok((a, false))
+    fn merge<T: Clone + Debug>(a: T, _b: T) -> T {
+        a
     }
 
     fn build_tree<T: Clone + Debug>(val: T) -> IntervalTree<T> {
@@ -929,7 +921,6 @@ mod tests {
         node2.color = Color::Red;
         node1.right = Some(node2);
         node1.left = Some(node5);
-        // let mut node1 = dbg!(node1);
         Node::rotate_left(&mut node1);
         assert_eq!(node1.key.start, 3);
         let n2 = node1.left.unwrap();
@@ -1012,7 +1003,6 @@ mod tests {
     fn find_next() {
         let val = 1;
         let mut tree = build_tree(val);
-        // tree.print();
         tree.delete(TextRange::new(5, 6));
         let mut n = tree.min().unwrap();
 
@@ -1020,7 +1010,6 @@ mod tests {
             match n.next() {
                 Some(ne) => {
                     n = ne;
-                    // println!("{:?}", ne.key);
                 }
                 None => break,
             }

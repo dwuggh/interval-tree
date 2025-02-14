@@ -78,9 +78,9 @@ impl TextRange {
         }
         None
     }
-    /// split self, return the split out interval. 
-	/// if `left` is true, the left part is split out and returned.
-	/// This function does not check whether `position` is valid.
+    /// split self, return the split out interval.
+    /// if `left` is true, the left part is split out and returned.
+    /// This function does not check whether `position` is valid.
     pub fn split_at(&mut self, position: usize, left: bool) -> Self {
         if left {
             let start = self.start;
