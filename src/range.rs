@@ -69,6 +69,25 @@ impl TextRange {
         self.start <= pos && pos < self.end
     }
 
+    /// Determines the strict ordering relationship between two ranges.
+    ///
+    /// Returns `Some(Ordering::Less)` if this range is completely before the other range.
+    /// Returns `Some(Ordering::Greater)` if this range is completely after the other range.
+    /// Returns `None` if the ranges overlap.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::cmp::Ordering;
+    /// use interval_rbtree::TextRange;
+    ///
+    /// let a = TextRange::new(0, 5);
+    /// let b = TextRange::new(6, 10);
+    /// assert_eq!(a.strict_order(&b), Some(Ordering::Less));
+    ///
+    /// let c = TextRange::new(7, 8);
+    /// assert_eq!(c.strict_order(&b), None);
+    /// ```
     pub fn strict_order(&self, other: &Self) -> Option<Ordering> {
         if self.end <= other.start {
             return Some(Ordering::Less);
@@ -91,6 +110,10 @@ impl TextRange {
             self.end = position;
             Self::new(position, end)
         }
+    }
+
+    pub fn includes(&self, other: Self) -> bool {
+        self.end >= other.end && self.start <= other.start
     }
 
     pub fn intersects(&self, other: Self) -> bool {

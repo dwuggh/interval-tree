@@ -186,9 +186,17 @@ impl<T: Clone> Node<T> {
         unsafe { self.parent.as_mut() }
     }
 
+    fn get_node_mut(&mut self, key: TextRange) -> Option<&mut Node<T>> {
+        match key.cmp(&self.key) {
+            std::cmp::Ordering::Equal => Some(self),
+            std::cmp::Ordering::Less => self.left.as_mut().and_then(|n| n.get_node_mut(key)),
+            std::cmp::Ordering::Greater => self.right.as_mut().and_then(|n| n.get_node_mut(key)),
+        }
+    }
+
     fn get(&self, key: TextRange) -> Option<T> {
         match key.cmp(&self.key) {
-            std::cmp::Ordering::Equal => Some(self.val.clone()), // TODO determine clone here
+            std::cmp::Ordering::Equal => Some(self.val.clone()),
             std::cmp::Ordering::Less => self.left.as_ref().and_then(|n| n.get(key)),
             std::cmp::Ordering::Greater => self.right.as_ref().and_then(|n| n.get(key)),
         }
@@ -206,6 +214,9 @@ impl<T: Clone> Node<T> {
         is_right_child: bool,
         merge_fn: &F,
     ) -> Option<&'a mut BoxedNode<T>> {
+        if key.start == key.end {
+            return None;
+        }
         match node {
             Some(ref mut n) => Node::insert_at_inner(n, key, val, merge_fn),
             None => {
@@ -227,7 +238,7 @@ impl<T: Clone> Node<T> {
         merge_fn: &F,
     ) -> Option<&'a mut BoxedNode<T>> {
         let intersect = key.intersects(node.key);
-        // TODO too taunting, also, plist should be cloned?
+        // TODO too taunting
         let ptr: *mut Node<T> = node.as_mut();
         if intersect {
             if key.start < node.key.start {
@@ -274,6 +285,9 @@ impl<T: Clone> Node<T> {
                     Node::insert_at(&mut node.right, key_right, val.clone(), ptr, true, merge_fn);
                 }
             }
+        }
+        if key.start == key.end {
+            return None;
         }
         let cmp = key.cmp(&node.key);
         match cmp {
@@ -338,13 +352,17 @@ impl<T: Clone> Node<T> {
         Some(())
     }
 
+    /// Assuming that h is red and both h.left and h.left.left
+    /// are black, make h.left or one of its children red.
     fn move_red_left(node: &mut BoxedNode<T>) -> Option<()> {
         Node::flip_colors(node);
-        let nr = node.right.as_mut()?;
-        if Node::red(&nr.left) {
-            Node::rotate_right(nr)?;
-            Node::rotate_left(node)?;
-            Node::flip_colors(node);
+        // h.right.left == Red
+        if let Some(ref mut nr) = node.right.as_mut() {
+            if Node::red(&nr.left) {
+                Node::rotate_right(nr)?;
+                Node::rotate_left(node)?;
+                Node::flip_colors(node);
+            }
         }
         Some(())
     }
@@ -429,12 +447,6 @@ impl<T: Clone> Node<T> {
             if cond {
                 Node::move_red_right(n).unwrap();
             }
-
-            // if let Some(ref mut r) = n.right {
-            //     if r.color == Color::Black && !Node::red(&r.left) {
-            //         Node::move_red_right(n).unwrap();
-            //     }
-            // }
 
             if key == n.key {
                 let mut result = Node::delete_min(&mut n.right);
@@ -553,6 +565,23 @@ impl<T: Clone> Node<T> {
         }
     }
 
+    pub fn find_intersects_min(&self, range: TextRange) -> Option<&Node<T>> {
+        let ord = range.strict_order(&self.key);
+        match ord {
+            Some(Ordering::Less) => self
+                .left
+                .as_ref()
+                .and_then(|l| l.find_intersects_min(range)),
+            Some(Ordering::Equal) => Some(self),
+            Some(Ordering::Greater) => None,
+            _ => self
+                .left
+                .as_ref()
+                .and_then(|l| l.find_intersects_min(range))
+                .or(Some(self)),
+        }
+    }
+
     /// Recursively applies a function to each node in the tree in order.
     /// f is mutable and has type FnMut because it may modify its parameters
     fn apply<F>(&self, f: &mut F)
@@ -667,6 +696,24 @@ impl<T: Clone> IntervalTree<T> {
         result
     }
 
+    /// Inserts a new interval with the specified `key` and `val` into the interval tree,
+    /// overriding any existing intervals that intersect with `key`.
+    ///
+    /// If `del_intersects` is `true`, all intervals that intersect with `key` will be deleted.
+    /// Otherwise, only the intersecting parts will be deleted, non-intersecting parts will be
+    /// split and kept unchange.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The text range representing the interval to insert.
+    /// * `val` - The value associated with the interval.
+    /// * `del_intersects` - Whether to delete all intersecting intervals or not.
+    fn insert_with_override(&mut self, key: impl Into<TextRange>, val: T, del_intersects: bool) {
+        if del_intersects {
+            self.find_intersects(key);
+        }
+    }
+
     /// Finds the node with key `key` in the tree and returns its value if found.
     ///
     /// # Arguments
@@ -683,13 +730,21 @@ impl<T: Clone> IntervalTree<T> {
         }
     }
 
-    /// Delete the node with key `key` from the tree.
+    fn get_node_mut(&mut self, key: impl Into<TextRange>) -> Option<&mut Node<T>> {
+        match self.root {
+            Some(ref mut r) => r.get_node_mut(key.into()),
+            None => None,
+        }
+    }
+
+    /// Delete the node with key `key` from the tree. The `key` must excatly match
+    /// an interval in the tree.
     ///
     /// If the root node is the only black node, then we have to make it red
     /// before deleting. Otherwise, the tree would become unbalanced.
     ///
     /// After deleting, we make sure the root node is black again.
-    pub fn delete(&mut self, key: impl Into<TextRange>) -> MaybeNode<T> {
+    pub fn delete_exact(&mut self, key: impl Into<TextRange>) -> MaybeNode<T> {
         let key = key.into();
         let result = match self.root {
             Some(ref mut root) => {
@@ -741,6 +796,77 @@ impl<T: Clone> IntervalTree<T> {
         result
     }
 
+    /// Deletes intervals from the tree that intersect with the given range.
+    ///
+    /// The behavior depends on the `del_extend` parameter:
+    /// - If `true`, deletes all intervals that intersect with the range
+    /// - If `false`, only deletes the intersecting portions of intervals, preserving
+    ///   non-intersecting parts by splitting them into new intervals
+    ///
+    /// # Arguments
+    ///
+    /// * `range` - The range to delete (can be any type that converts to TextRange)
+    /// * `del_extend` - Whether to delete entire intersecting intervals or just the overlapping portions
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use interval_rbtree::{IntervalTree, TextRange};
+    ///
+    /// let mut tree = IntervalTree::new();
+    /// tree.insert(TextRange::new(0, 10), 1, |a, _| a);
+    ///
+    /// // Delete only overlapping portion
+    /// tree.delete(TextRange::new(5, 15), false);
+    /// assert_eq!(tree.find_intersects(TextRange::new(0, 10)).len(), 1);
+    ///
+    /// let mut tree = IntervalTree::new();
+    /// tree.insert(TextRange::new(0, 10), 1, |a, _| a);
+    ///
+    /// // Delete entire intersecting interval
+    /// tree.delete(TextRange::new(5, 15), true);
+    /// assert!(tree.find_intersects(TextRange::new(0, 10)).is_empty());
+    /// ```
+    pub fn delete(&mut self, range: impl Into<TextRange>, del_extend: bool) {
+        let range: TextRange = range.into();
+        for key in self
+            .find_intersects(range)
+            .iter()
+            .map(|n| n.key)
+            .collect::<Vec<_>>()
+        {
+            if del_extend {
+                self.delete_exact(key);
+                continue;
+            }
+            // key right-intersect with range
+            // if key is a subset of range, delete it
+            if key.start >= range.start && key.end <= range.end {
+                self.delete_exact(key);
+            }
+
+            // if key is not a subset of range but its start is within range,
+            // split it into two parts, and delete the part that is within range
+            if key.start < range.start {
+                let n = self.get_node_mut(key).unwrap();
+                n.key.end = range.start;
+                if key.end > range.end {
+                    let val = n.val.clone();
+                    let f = |_, _| unreachable!(); // f will not be invoked anyway
+                    self.insert(TextRange::new(range.start, key.end), val, f);
+                }
+            }
+
+            // if key is not a subset of range but its end is within range,
+            // split it into two parts, and delete the part that is within range
+            if key.end > range.end {
+                let n = self.get_node_mut(key).unwrap();
+                n.key.start = range.end;
+            }
+            // unreachable!()
+        }
+    }
+
     /// Advances all intervals in the tree by `length`, starting at
     /// `position`. This is typically used to implement operations that insert
     /// or delete text in a buffer.
@@ -760,10 +886,10 @@ impl<T: Clone> IntervalTree<T> {
 
     /// Find all nodes in the tree whose intervals intersect the given
     /// `range`. The result is a vector of references to the found nodes.
-    pub fn find_intersects(&self, range: TextRange) -> Vec<&Node<T>> {
+    pub fn find_intersects(&self, range: impl Into<TextRange>) -> Vec<&Node<T>> {
         let mut result = Vec::new();
         if let Some(ref r) = self.root {
-            r.find_intersects(range, &mut result);
+            r.find_intersects(range.into(), &mut result);
         }
         result
     }
@@ -795,7 +921,7 @@ impl<T: Clone> IntervalTree<T> {
             while let Some(next_ptr) = node.next_raw() {
                 let next = safe_mut(next_ptr);
                 if node.key.end == next.key.start && equal(&node.val, &next.val) {
-                    let del = self.delete(next.key).unwrap();
+                    let del = self.delete_exact(next.key).unwrap();
                     node.key.end = del.key.end;
                 } else {
                     node = next;
@@ -816,24 +942,21 @@ impl<T: Clone> IntervalTree<T> {
         }
     }
 }
-impl<T: Clone + Debug> IntervalTree<T> {
-    /// Recursively print out the tree, for debugging purposes. The output format
-    /// is not guaranteed to be stable.
-    pub fn print(&self) {
-        println!("{self:?}");
-    }
 
-    fn print_inner(node: &Node<T>, f: &mut std::fmt::Formatter, level: usize) -> std::fmt::Result {
+// impl debug
+
+impl<T: Clone + Debug> Node<T> {
+    fn print_inner(&self, f: &mut std::fmt::Formatter, level: usize) -> std::fmt::Result {
         write_fmt_with_level(
             f,
             level,
             format_args!(
                 "[key: {:?}, val: {:?}, color: {:?}]\n",
-                node.key, node.val, node.color
+                self.key, self.val, self.color
             ),
         )?;
-        if let Some(parent) = unsafe { node.parent.as_ref() } {
-            let direction = if node.is_right_child { "right" } else { "left" };
+        if let Some(parent) = unsafe { self.parent.as_ref() } {
+            let direction = if self.is_right_child { "right" } else { "left" };
             write_fmt_with_level(
                 f,
                 level,
@@ -843,17 +966,25 @@ impl<T: Clone + Debug> IntervalTree<T> {
             write_fmt_with_level(f, level, format_args!("parent: not found"))?;
         }
         f.write_char('\n')?;
-        if let Some(ref l) = node.left {
+        if let Some(ref l) = self.left {
             write_fmt_with_level(f, level, format_args!("left: \n"))?;
-            IntervalTree::print_inner(l, f, level + 1)?;
-            write_fmt_with_level(f, level, format_args!("left end for {:?}\n", node.key))?;
+            l.print_inner(f, level + 1)?;
+            write_fmt_with_level(f, level, format_args!("left end for {:?}\n", self.key))?;
         }
-        if let Some(ref r) = node.right {
+        if let Some(ref r) = self.right {
             write_fmt_with_level(f, level, format_args!("right: \n"))?;
-            IntervalTree::print_inner(r, f, level + 1)?;
-            write_fmt_with_level(f, level, format_args!("right end for {:?}\n", node.key))?;
+            r.print_inner(f, level + 1)?;
+            write_fmt_with_level(f, level, format_args!("right end for {:?}\n", self.key))?;
         }
         Ok(())
+    }
+}
+
+impl<T: Clone + Debug> IntervalTree<T> {
+    /// Recursively print out the tree, for debugging purposes. The output format
+    /// is not guaranteed to be stable.
+    pub fn print(&self) {
+        println!("{self:?}");
     }
 }
 
@@ -868,11 +999,18 @@ fn write_fmt_with_level(
     f.write_fmt(fmt)
 }
 
+impl<T: Clone + Debug> Debug for Node<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Node:\n")?;
+        self.print_inner(f, 0)
+    }
+}
+
 impl<T: Clone + Debug> Debug for IntervalTree<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Interval Tree:\n")?;
         if let Some(root) = self.root.as_ref() {
-            IntervalTree::print_inner(root, f, 0)?
+            root.print_inner(f, 0)?
         }
         Ok(())
     }
@@ -961,7 +1099,7 @@ mod tests {
         // let mut tree = dbg!(tree);
         for k in vec![8, 4, 5, 7, 3, 6].into_iter() {
             let i = TextRange::new(k, k + 1);
-            let a = tree.delete(i).unwrap();
+            let a = tree.delete_exact(i).unwrap();
             assert_eq!(a.key, i);
         }
     }
@@ -1003,7 +1141,7 @@ mod tests {
     fn find_next() {
         let val = 1;
         let mut tree = build_tree(val);
-        tree.delete(TextRange::new(5, 6));
+        tree.delete_exact(TextRange::new(5, 6));
         let mut n = tree.min().unwrap();
 
         loop {
